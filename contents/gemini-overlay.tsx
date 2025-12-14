@@ -81,6 +81,13 @@ const GeminiOverlay = () => {
         return () => observer.disconnect()
     }, [inputElement])
 
+    // Helper for smart detection
+    const containsJapanese = (text: string) => {
+        // Regex for Hiragana, Katakana, and common Kanji ranges
+        const japaneseRegex = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/
+        return japaneseRegex.test(text)
+    }
+
     useEffect(() => {
         if (!inputElement) return
 
@@ -91,7 +98,15 @@ const GeminiOverlay = () => {
 
             if (text.trim().length > 2) {
                 setIsTranslating(true)
-                addLog(`Requesting translate for: "${text.substring(0, 10)}..."`)
+
+                // Smart Language Detection
+                const isJapanese = containsJapanese(text)
+                const smartTargetLang = isJapanese ? "EN" : "JA"
+
+                // Update local state for UI immediately
+                setTargetLang(smartTargetLang)
+
+                addLog(`Input: "${text.substring(0, 10)}..." -> Detected: ${isJapanese ? "Japanese" : "Non-Japanese"} -> Target: ${smartTargetLang}`)
 
                 try {
                     // Use background worker to bypass CORS/CSP
@@ -100,7 +115,7 @@ const GeminiOverlay = () => {
                         body: {
                             text,
                             sourceLang: "auto",
-                            targetLang
+                            targetLang: smartTargetLang // Use the detected target immediately
                         }
                     }) as { text?: string; error?: string }
 
@@ -131,7 +146,7 @@ const GeminiOverlay = () => {
         return () => {
             inputElement.removeEventListener("input", handleInput)
         }
-    }, [inputElement, targetLang])
+    }, [inputElement]) // Removed targetLang dependency as we calc it per input now
 
     const applyTranslation = () => {
         if (inputElement && translatedText) {
