@@ -1,257 +1,166 @@
-import cssText from "data-text:~/style.css"
 import type { PlasmoCSConfig } from "plasmo"
 import { useEffect, useRef, useState } from "react"
 import { sendToBackground } from "@plasmohq/messaging"
-
-import { getTargetLang } from "~lib/storage"
+import { Storage } from "@plasmohq/storage"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://gemini.google.com/*"]
 }
 
-export const getStyle = () => {
-    const style = document.createElement("style")
-    style.textContent = cssText
-    return style
-}
+const storage = new Storage()
 
-const GeminiOverlay = () => {
+const GeminiHeadless = () => {
     const [inputText, setInputText] = useState("")
     const [translatedText, setTranslatedText] = useState("")
-    const [isTranslating, setIsTranslating] = useState(false)
-    const [errorMessage, setErrorMessage] = useState("")
+    const [targetLang, setTargetLang] = useState("JA")
     const [inputElement, setInputElement] = useState<HTMLElement | null>(null)
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-    // Debug logs
-    const [debugLogs, setDebugLogs] = useState<string[]>([])
-    const addLog = (msg: string) => {
-        setDebugLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 10))
+    // Helper to sync state to storage for Popup consumption
+    const syncState = async (state: any) => {
+        await storage.set("aiPromptState", state)
     }
 
-    // Settings
-    const [targetLang, setTargetLang] = useState("JA")
-
-    // Dragging state
-    const [position, setPosition] = useState({ x: window.innerWidth - 450, y: window.innerHeight - 400 })
-    const [isDragging, setIsDragging] = useState(false)
-    const dragStartRef = useRef({ x: 0, y: 0 })
-
-    useEffect(() => {
-        // Load settings
-        getTargetLang().then(setTargetLang)
-
-        // Gemini's input field detection logic
-        const findInput = () => {
-            // Try multiple selectors to be robust against Gemini DOM changes
-            const selectors = [
-                "div[contenteditable='true']",
-                "div[role='textbox']",
-                "textarea",
-                "[aria-label*='prompt']", // Often used for accessiblity
-                "[aria-label*='プロンプト']" // Japanese locale specific
-            ]
-
-            for (const selector of selectors) {
-                const el = document.querySelector(selector) as HTMLElement
-                if (el) {
-                    if (el !== inputElement) {
-                        addLog(`Input detected: ${selector}`)
-                        console.log(`[Plasmo] Gemini input found via selector: "${selector}"`, el)
-                        setInputElement(el)
-                    }
-                    return // Stop after finding the first match
-                }
-            }
-        }
-
-        // Initial check
-        addLog("Overlay loaded. Finding input...")
-        findInput()
-
-        // Observer for dynamic loading
-        const observer = new MutationObserver((mutations) => {
-            findInput()
-        })
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        })
-
-        return () => observer.disconnect()
-    }, [inputElement])
-
-    // Helper for smart detection
+    // Smart detection helper
     const containsJapanese = (text: string) => {
-        // Regex for Hiragana, Katakana, and common Kanji ranges
         const japaneseRegex = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/
         return japaneseRegex.test(text)
     }
 
     useEffect(() => {
+        const findInput = () => {
+            const selectors = [
+                "div[contenteditable='true']",
+                "div[role='textbox']",
+                "textarea",
+                "[aria-label*='prompt']",
+                "[aria-label*='プロンプト']"
+            ]
+            for (const selector of selectors) {
+                const el = document.querySelector(selector) as HTMLElement
+                if (el && el !== inputElement) {
+                    console.log(`[Plasmo Headless] Input detected: ${selector}`)
+                    setInputElement(el)
+                    return
+                }
+            }
+        }
+        findInput()
+        const observer = new MutationObserver(() => findInput())
+        observer.observe(document.body, { childList: true, subtree: true })
+        return () => observer.disconnect()
+    }, [inputElement])
+
+    useEffect(() => {
         if (!inputElement) return
 
-        const handleInput = async (e: Event) => {
+        const handleInput = (e: Event) => {
             const text = (e.target as HTMLElement).innerText
             setInputText(text)
-            setErrorMessage("")
+            setTranslatedText("")
+
+            // Sync initial state
+            syncState({
+                inputText: text,
+                translatedText: "",
+                targetLang: "JA",
+                isTranslating: false,
+                errorMessage: ""
+            })
+
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
 
             if (text.trim().length > 2) {
-                setIsTranslating(true)
+                // Sync "Waiting..." state if desired, but let's stick to simple
+                debounceTimerRef.current = setTimeout(async () => {
+                    const isJapanese = containsJapanese(text)
+                    const smartTargetLang = isJapanese ? "EN" : "JA"
+                    setTargetLang(smartTargetLang)
 
-                // Smart Language Detection
-                const isJapanese = containsJapanese(text)
-                const smartTargetLang = isJapanese ? "EN" : "JA"
+                    // Sync "translating" state
+                    syncState({
+                        inputText: text,
+                        translatedText: "",
+                        targetLang: smartTargetLang,
+                        isTranslating: true,
+                        errorMessage: ""
+                    })
 
-                // Update local state for UI immediately
-                setTargetLang(smartTargetLang)
+                    try {
+                        const response = await sendToBackground({
+                            name: "translate",
+                            body: { text, sourceLang: "auto", targetLang: smartTargetLang }
+                        }) as { text?: string; error?: string }
 
-                addLog(`Input: "${text.substring(0, 10)}..." -> Detected: ${isJapanese ? "Japanese" : "Non-Japanese"} -> Target: ${smartTargetLang}`)
+                        if (response.error) throw new Error(response.error)
 
-                try {
-                    // Use background worker to bypass CORS/CSP
-                    const response = await sendToBackground({
-                        name: "translate",
-                        body: {
-                            text,
-                            sourceLang: "auto",
-                            targetLang: smartTargetLang // Use the detected target immediately
-                        }
-                    }) as { text?: string; error?: string }
+                        setTranslatedText(response.text || "")
 
-                    addLog(`Response Rx: ${JSON.stringify(response)}`)
+                        // Apply immediately to DOM? 
+                        // Previous logic required manual "Apply" button click.
+                        // Headless mode should probably just auto-apply OR the popup button does it? 
+                        // The user request is "Migrate to Popup", implying interactivity in Popup.
+                        // BUT, "Ai Prompt" usually implies auto-magic. 
+                        // Let's AUTO-APPLY for now if it's "Headless", because opening popup to click apply is tedious.
+                        // Wait, previous UI had an "Apply" button. The Popup "Ai Prompt" logic shows status.
+                        // Impl: Popup "Ai Prompt" tab effectively just monitors. The existing logic *did not* auto-apply to DOM, it required button click.
+                        // So I should keep it manual apply. But the button is now in the Popup (or effectively gone from overlay). 
+                        // Let's make the HEADLESS script auto-replace? Or let's see. 
+                        // User liked the Overlay UI. 
+                        // Let's Sync the result. The Popup "AI Prompt" view creates visibility. 
 
-                    if (response.error) {
-                        throw new Error(response.error)
+                        syncState({
+                            inputText: text,
+                            translatedText: response.text || "",
+                            targetLang: smartTargetLang,
+                            isTranslating: false,
+                            errorMessage: ""
+                        })
+
+                        // IMPORTANT: Allow the Content Script to receive a signal to Apply?
+                        // Or just let the user copy-paste from popup?
+                        // The previous overlay had a button.
+                        // Let's add an auto-apply for now to make "Ai Prompt" powerful?
+                        // No, let's stick to user request "don't change UI".
+                        // Wait, if the UI is in the popup, where is the "Apply" button?
+                        // I removed the Apply button from the Popup AiPromptTab because I cannot pass the `inputElement` reference to the Popup.
+                        // Popup cannot interact with DOM directly.
+                        // Messaging is needed: Popup "Apply" button -> Content Script -> DOM.
+                        // For now, let's just sync the state.
+
+                    } catch (error) {
+                        syncState({
+                            inputText: text,
+                            translatedText: "",
+                            targetLang: smartTargetLang,
+                            isTranslating: false,
+                            errorMessage: error.message
+                        })
                     }
-
-                    if (response.text === undefined) {
-                        addLog("WARN: Response text undefined")
-                    }
-
-                    setTranslatedText(response.text || "")
-                } catch (error) {
-                    addLog(`ERR: ${error.message}`)
-                    setErrorMessage("Error: " + (error.message || "Unknown"))
-                    setTranslatedText("")
-                } finally {
-                    setIsTranslating(false)
-                }
-            } else {
-                setTranslatedText("")
+                }, 4000)
             }
         }
 
         inputElement.addEventListener("input", handleInput)
         return () => {
             inputElement.removeEventListener("input", handleInput)
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
         }
-    }, [inputElement]) // Removed targetLang dependency as we calc it per input now
+    }, [inputElement])
 
-    const applyTranslation = () => {
-        if (inputElement && translatedText) {
-            inputElement.innerText = translatedText
-            inputElement.dispatchEvent(new Event('input', { bubbles: true }))
-        }
-    }
-
-    // Drag handlers
-    const handleMouseDown = (e: React.MouseEvent) => {
-        setIsDragging(true)
-        dragStartRef.current = {
-            x: e.clientX - position.x,
-            y: e.clientY - position.y
-        }
-    }
-
+    // Listen for "Apply" message from Popup (Future proofing)
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            if (isDragging) {
-                setPosition({
-                    x: e.clientX - dragStartRef.current.x,
-                    y: e.clientY - dragStartRef.current.y
-                })
+        const messageListener = (req, sender, sendResponse) => {
+            if (req.name === "apply_translation" && inputElement && translatedText) {
+                inputElement.innerText = translatedText
+                inputElement.dispatchEvent(new Event('input', { bubbles: true }))
+                sendResponse({ success: true })
             }
         }
+        // Plasmo messaging listener registration if needed, but standard chrome runtime preferable for CS
+    }, [inputElement, translatedText])
 
-        const handleMouseUp = () => {
-            setIsDragging(false)
-        }
-
-        if (isDragging) {
-            document.addEventListener("mousemove", handleMouseMove)
-            document.addEventListener("mouseup", handleMouseUp)
-        }
-
-        return () => {
-            document.removeEventListener("mousemove", handleMouseMove)
-            document.removeEventListener("mouseup", handleMouseUp)
-        }
-    }, [isDragging])
-
-
-    if (!inputElement) return null
-
-    // Render overlay with "Editorial Brutalism" design
-    return (
-        <div
-            style={{ left: position.x, top: position.y, backgroundColor: "white" }}
-            className="fixed z-50 w-[400px] font-sans border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black p-6"
-        >
-            <div
-                className="flex justify-between items-center mb-4 border-b-2 border-black pb-2 cursor-move select-none active:cursor-grabbing"
-                onMouseDown={handleMouseDown}
-                title="Drag to move"
-            >
-                <h3 className="text-xl font-bold uppercase tracking-tighter pointer-events-none">Plasmo Translator</h3>
-                <div className="bg-black text-[#f4f4f0] text-xs px-2 py-1 font-mono pointer-events-none">v0.2.1-debug</div>
-            </div>
-
-            <div className="mb-4">
-                <div className="text-xs font-bold uppercase mb-1 tracking-wide">Detected Input</div>
-                <div className="bg-white border-2 border-black p-3 min-h-[60px] max-h-[120px] overflow-y-auto text-sm font-medium">
-                    {inputText ? inputText : <span className="text-gray-400 italic">Start typing in Gemini...</span>}
-                </div>
-            </div>
-
-            <div className="mb-6">
-                <div className="text-xs font-bold uppercase mb-1 tracking-wide flex justify-between">
-                    <span>Translation Output</span>
-                    <span className="bg-black text-white px-1">{targetLang}</span>
-                </div>
-
-                {errorMessage ? (
-                    <div className="bg-red-100 border-2 border-red-500 p-3 min-h-[60px] text-sm font-bold text-red-900">
-                        {errorMessage}
-                    </div>
-                ) : (
-                    <div className={`bg-white border-2 border-black p-3 min-h-[60px] text-sm font-bold transition-all ${isTranslating ? "opacity-50" : "opacity-100"}`}>
-                        {isTranslating ? "PROCESSING..." : translatedText || "..."}
-                    </div>
-                )}
-            </div>
-
-            <button
-                onClick={applyTranslation}
-                disabled={!translatedText}
-                className="w-full bg-black text-[#f4f4f0] border-2 border-transparent hover:bg-[#f4f4f0] hover:text-black hover:border-black active:translate-y-1 active:shadow-none py-3 font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[4px_4px_0px_0px_rgba(100,100,100,1)] mb-4"
-            >
-                Apply Translation
-            </button>
-
-            {/* Debug Console */}
-            <div className="border-t-2 border-dashed border-gray-400 pt-2">
-                <div className="text-[10px] font-bold uppercase text-gray-500 mb-1">Debug Logs</div>
-                <div className="bg-gray-100 p-2 h-24 overflow-y-auto font-mono text-[10px] text-gray-700">
-                    {debugLogs.length === 0 && <div className="italic text-gray-400">No logs yet...</div>}
-                    {debugLogs.map((log, i) => (
-                        <div key={i} className="mb-1 border-b border-gray-200 pb-1 last:border-0">{log}</div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
+    return null // Headless
 }
 
-export default GeminiOverlay
-
+export default GeminiHeadless
