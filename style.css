@@ -1,0 +1,44 @@
+/* Editorial Brutalism Design System */
+:root {
+  /* Colors */
+  --bg-color: #f4f4f0;
+  --text-color: #000000;
+  --border-color: #000000;
+  --accent-color: #ff3333; /* For alerts or highlights if needed */
+
+  /* Dimensions */
+  --border-width: 2px;
+  --shadow-offset: 4px;
+  --radius: 0px; /* Sharp edges */
+
+  /* Shadows */
+  --shadow-hard: var(--shadow-offset) var(--shadow-offset) 0px 0px var(--border-color);
+  
+  /* Typography */
+  --font-heading: 'Times New Roman', serif; /* Classic Serif for contrast */
+  --font-body: 'Arial', sans-serif; /* Clean Sans for readability */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  width: 400px; /* Standard extension popup width */
+  min-height: 500px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  margin-top: 0;
+}
+
+button {
+  cursor: pointer;
+}
