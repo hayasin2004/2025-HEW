@@ -27,6 +27,8 @@ const GeminiHeadless = () => {
         return japaneseRegex.test(text)
     }
 
+    const DEBOUNCE_MS = 4000;
+
     useEffect(() => {
         const findInput = () => {
             const selectors = [
@@ -63,15 +65,25 @@ const GeminiHeadless = () => {
             syncState({
                 inputText: text,
                 translatedText: "",
-                targetLang: "JA",
+                targetLang: "JA", // Placeholder
                 isTranslating: false,
+                statusMessage: "Typing...",
                 errorMessage: ""
             })
 
             if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
 
             if (text.trim().length > 2) {
-                // Sync "Waiting..." state if desired, but let's stick to simple
+                // Set "Waiting" status
+                syncState({
+                    inputText: text,
+                    translatedText: "",
+                    targetLang: "...",
+                    isTranslating: false,
+                    statusMessage: `Waiting ${DEBOUNCE_MS / 1000}s...`,
+                    errorMessage: ""
+                })
+
                 debounceTimerRef.current = setTimeout(async () => {
                     const isJapanese = containsJapanese(text)
                     const smartTargetLang = isJapanese ? "EN" : "JA"
@@ -83,6 +95,7 @@ const GeminiHeadless = () => {
                         translatedText: "",
                         targetLang: smartTargetLang,
                         isTranslating: true,
+                        statusMessage: "Translating...",
                         errorMessage: ""
                     })
 
@@ -96,37 +109,14 @@ const GeminiHeadless = () => {
 
                         setTranslatedText(response.text || "")
 
-                        // Apply immediately to DOM? 
-                        // Previous logic required manual "Apply" button click.
-                        // Headless mode should probably just auto-apply OR the popup button does it? 
-                        // The user request is "Migrate to Popup", implying interactivity in Popup.
-                        // BUT, "Ai Prompt" usually implies auto-magic. 
-                        // Let's AUTO-APPLY for now if it's "Headless", because opening popup to click apply is tedious.
-                        // Wait, previous UI had an "Apply" button. The Popup "Ai Prompt" logic shows status.
-                        // Impl: Popup "Ai Prompt" tab effectively just monitors. The existing logic *did not* auto-apply to DOM, it required button click.
-                        // So I should keep it manual apply. But the button is now in the Popup (or effectively gone from overlay). 
-                        // Let's make the HEADLESS script auto-replace? Or let's see. 
-                        // User liked the Overlay UI. 
-                        // Let's Sync the result. The Popup "AI Prompt" view creates visibility. 
-
                         syncState({
                             inputText: text,
                             translatedText: response.text || "",
                             targetLang: smartTargetLang,
                             isTranslating: false,
+                            statusMessage: "Done",
                             errorMessage: ""
                         })
-
-                        // IMPORTANT: Allow the Content Script to receive a signal to Apply?
-                        // Or just let the user copy-paste from popup?
-                        // The previous overlay had a button.
-                        // Let's add an auto-apply for now to make "Ai Prompt" powerful?
-                        // No, let's stick to user request "don't change UI".
-                        // Wait, if the UI is in the popup, where is the "Apply" button?
-                        // I removed the Apply button from the Popup AiPromptTab because I cannot pass the `inputElement` reference to the Popup.
-                        // Popup cannot interact with DOM directly.
-                        // Messaging is needed: Popup "Apply" button -> Content Script -> DOM.
-                        // For now, let's just sync the state.
 
                     } catch (error) {
                         syncState({
@@ -134,10 +124,11 @@ const GeminiHeadless = () => {
                             translatedText: "",
                             targetLang: smartTargetLang,
                             isTranslating: false,
+                            statusMessage: "Error",
                             errorMessage: error.message
                         })
                     }
-                }, 4000)
+                }, DEBOUNCE_MS)
             }
         }
 
@@ -148,19 +139,7 @@ const GeminiHeadless = () => {
         }
     }, [inputElement])
 
-    // Listen for "Apply" message from Popup (Future proofing)
-    useEffect(() => {
-        const messageListener = (req, sender, sendResponse) => {
-            if (req.name === "apply_translation" && inputElement && translatedText) {
-                inputElement.innerText = translatedText
-                inputElement.dispatchEvent(new Event('input', { bubbles: true }))
-                sendResponse({ success: true })
-            }
-        }
-        // Plasmo messaging listener registration if needed, but standard chrome runtime preferable for CS
-    }, [inputElement, translatedText])
-
-    return null // Headless
+    return null
 }
 
 export default GeminiHeadless
