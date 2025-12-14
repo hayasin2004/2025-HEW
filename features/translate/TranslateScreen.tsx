@@ -11,13 +11,13 @@ export const TranslateScreen: React.FC = () => {
     const [inputText, setInputText] = useState("");
     const [translatedText, setTranslatedText] = useState("");
     const [loading, setLoading] = useState(false);
-    const [targetLang, setTargetLang] = useState("EN");
+    const [targetLang, setTargetLang] = useState("JA");
 
     const handleTranslate = async () => {
         if (!inputText) return;
         setLoading(true);
         try {
-            const result = await translateText(inputText, "JA", targetLang);
+            const result = await translateText(inputText, "auto", targetLang);
             setTranslatedText(result);
 
             // Save to history if logged in
@@ -26,7 +26,7 @@ export const TranslateScreen: React.FC = () => {
                     userId: user.uid,
                     originalText: inputText,
                     translatedText: result,
-                    sourceLang: "JA",
+                    sourceLang: "auto",
                     targetLang: targetLang
                 });
             }
