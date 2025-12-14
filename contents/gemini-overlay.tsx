@@ -14,7 +14,7 @@ const GeminiHeadless = () => {
     const [translatedText, setTranslatedText] = useState("")
     const [targetLang, setTargetLang] = useState("JA")
     const [inputElement, setInputElement] = useState<HTMLElement | null>(null)
-    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const debounceTimerRef = useRef<any | null>(null)
 
     // Helper to sync state to storage for Popup consumption
     const syncState = async (state: any) => {
@@ -27,7 +27,7 @@ const GeminiHeadless = () => {
         return japaneseRegex.test(text)
     }
 
-    const DEBOUNCE_MS = 4000;
+    const DEBOUNCE_MS = 2000;
 
     useEffect(() => {
         const findInput = () => {
